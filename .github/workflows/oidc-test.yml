@@ -65,4 +65,18 @@ jobs:
 
           docker images
 
-      # NO docker push in this lesson
+
+      # STEP 9 - Push image to Amazon ECR
+      - name: Push Docker Image to ECR
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="$REGISTRY/eks-delivery-lab:$IMAGE_TAG"
+
+          echo "Pushing Docker image to Amazon ECR"
+
+          docker push "$IMAGE"
+
+          echo "ECR push successful"
+
