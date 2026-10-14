@@ -1,23 +1,68 @@
 
-name: AWS OIDC Login Test
+name: AWS ECR Image Tagging Test
 
-# Run manually from GitHub Actions
 on:
   workflow_dispatch:
 
 permissions:
+  contents: read
   id-token: write
 
 jobs:
-  verify-aws-login:
+  verify-ecr-tag:
     runs-on: ubuntu-latest
 
     steps:
+      # STEP 1: Checkout GitHub source
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # STEP 2: Setup Java
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # STEP 3: Create Spring Boot JAR
+      - name: Maven Build
+        run: mvn -B -ntp clean package
+
+      # STEP 4: Authenticate with AWS
       - name: Login to AWS using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ap-south-1
 
+      # STEP 5: Verify AWS identity
       - name: Verify AWS Identity
         run: aws sts get-caller-identity
+
+      # STEP 6: Login Docker to ECR
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # STEP 7: Build local Docker image
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t eks-delivery-lab:${{ github.sha }} .
+
+      # STEP 8: Tag image for ECR
+      - name: Tag Docker Image for ECR
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker tag \
+            eks-delivery-lab:$IMAGE_TAG \
+            $REGISTRY/eks-delivery-lab:$IMAGE_TAG
+
+          echo "Image tagged successfully"
+
+          docker images
+
+      # NO docker push in this lesson
