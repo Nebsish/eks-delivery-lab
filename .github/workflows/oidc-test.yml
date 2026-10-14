@@ -1,0 +1,23 @@
+
+name: AWS OIDC Login Test
+
+# Run manually from GitHub Actions
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+jobs:
+  verify-aws-login:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Login to AWS using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Verify AWS Identity
+        run: aws sts get-caller-identity
