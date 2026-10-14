@@ -1,5 +1,7 @@
-name: EKS Delivery Lab CI Pipeline
 
+name: EKS Delivery Lab - CI Docker Pipeline
+
+# Start automatically after push or pull request
 on:
   push:
     branches:
@@ -13,30 +15,42 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  build-test-docker:
 
-    name: Build and Test Spring Boot
+    name: Build Test and Docker Verify
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
+    env:
+      IMAGE_NAME: eks-delivery-lab
+      IMAGE_TAG: ${{ github.sha }}
 
     steps:
 
-      - name: Checkout Code
+      # STEP 1 - Download source code
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      # STEP 2 - Configure Java
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Verify Java and Maven
-        run:
+
+      # STEP 3 - Check development tools
+      - name: Verify Java Maven and Docker
+        run: |
           java -version
           mvn -version
+          docker version
 
-      - name: Maven Build and Test
+      # STEP 4 - Build JAR and execute tests
+      - name: Maven Build and JUnit Tests
         run: mvn -B -ntp clean verify
+
+      # STEP 5 - Publish JUnit reports
       - name: Upload Test Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -45,11 +59,71 @@ jobs:
           path: target/surefire-reports/
           if-no-files-found: ignore
 
+      # STEP 6 - Upload executable application JAR
       - name: Upload Application JAR
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: eks-delivery-lab-jar
           path: target/*.jar
           if-no-files-found: error
           retention-days: 7
+
+      # STEP 7 - Build Docker image
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -t "$IMAGE_NAME:$IMAGE_TAG" .
+
+      # STEP 8 - Verify Docker image
+      - name: Verify Docker Image
+        run: |
+          docker image inspect \
+            "$IMAGE_NAME:$IMAGE_TAG" \
+            --format '{{.Id}}'
+
+          docker images "$IMAGE_NAME"
+
+      # STEP 9 - Run container and test endpoints
+      - name: Docker Container Smoke Test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker run -d \
+            --name eks-delivery-smoke \
+            -p 127.0.0.1:18083:8080 \
+            "$IMAGE_NAME:$IMAGE_TAG"
+
+          trap 'docker rm -f eks-delivery-smoke >/dev/null 2>&1 || true' EXIT
+
+          echo "Waiting for Spring Boot to start..."
+
+          HEALTHY=false
+
+          for attempt in {1..30}; do
+            if curl -fsS \
+              http://127.0.0.1:18083/actuator/health \
+              2>/dev/null |
+              grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"'; then
+
+              HEALTHY=true
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$HEALTHY" != "true" ]; then
+            echo "Health check failed"
+            docker logs eks-delivery-smoke
+            exit 1
+          fi
+
+          echo "Actuator health check PASSED"
+
+          curl -fsS \
+            http://127.0.0.1:18083/api/hello |
+            grep -Fq "Hello from EKS Delivery Lab"
+
+          echo "REST API smoke test PASSED"
+          echo "Docker CI completed successfully"
